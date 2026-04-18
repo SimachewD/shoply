@@ -1,0 +1,45 @@
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: shoply_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "54432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - shoply_net
+
+  redis:
+    image: redis:7
+    container_name: shoply_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - shoply_net
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: shoply_pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@shoply.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - shoply_net
+
+volumes:
+  postgres_data:
+
+networks:
+  shoply_net:
