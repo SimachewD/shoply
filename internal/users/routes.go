@@ -1,4 +1,3 @@
-// internal/users/routes.go
 package users
 
 import (
@@ -6,11 +5,39 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
+	"github.com/sime/shoply/internal/auth"
+	"github.com/sime/shoply/internal/utils"
 )
 
-func RegisterRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client) {
-    h := &Handler{DB: db, JWTSecret: "REPLACE_WITH_ENV_JWT_SECRET"}
+func UserRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client) {
+	repo := NewRepository(db)
+	service := NewService(repo, utils.GetEnv("JWT_SECRET", ""))
+	handler := NewHandler(service)
 
-    r.POST("/api/register", h.Register)
-    r.POST("/api/login", h.Login)
+	// auth routes
+	authRoutes := r.Group("/api/auth")
+	{
+		authRoutes.POST("/register", handler.Register)
+		authRoutes.POST("/login", handler.Login)
+	}
+
+	// user routes
+	userRoutes := r.Group("/api/user")
+	userRoutes.Use(auth.AuthMiddleware())
+	{
+		userRoutes.GET("/profile/:id", handler.GetProfile)
+		userRoutes.PATCH("/profile/:id", handler.UpdateProfile)
+	}
+
+	// admin routes
+	admin := r.Group("/api/admin")
+	admin.Use(auth.AuthMiddleware())
+	admin.Use(auth.RequireRole("admin"))
+	{
+		admin.GET("/users", handler.GetUsers)
+		admin.DELETE("/users/:id", handler.DeleteUser)
+		admin.PATCH("/users/:id/role", handler.ChangeUserRole)
+		admin.GET("/users/:id", handler.GetProfile)
+		admin.PATCH("/users/:id", handler.UpdateProfile)
+	}
 }
