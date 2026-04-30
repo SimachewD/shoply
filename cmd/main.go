@@ -43,8 +43,16 @@ func main() {
 	// 🟢 5. START SERVER
 	r := gin.Default()
 
-    // 🟢 6. Enable CORS
-    r.Use(cors.Default())
+    // 🟢 6. Enable CORS for all origins, no credentials
+    // r.Use(cors.Default())
+
+	// 🟢 7. Enable CORS for specific origin
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:8080"}, 
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		AllowCredentials: true, 
+	}))
 
 	users.UserRoutes(r, db, rdb)
 

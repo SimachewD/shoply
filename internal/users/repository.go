@@ -2,9 +2,11 @@ package users
 
 import (
 	"database/sql"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/sime/shoply/internal/models"
+	"github.com/sime/shoply/internal/utils"
 )
 
 type Repository struct {
@@ -27,6 +29,44 @@ func (r *Repository) Register(user *models.User) (*models.User, error) {
 	).Scan(&user.ID, &user.Name, &user.Email, &user.Role, &user.CreatedAt, &user.UpdatedAt)
 
 	return user, err
+}
+
+func (r *Repository) StoreRefreshToken(userID string, jti string, expiresAt time.Time) error {
+	hashed := utils.HashToken(jti)
+
+	_, err := r.DB.Exec(`
+		INSERT INTO refresh_tokens (user_id, jti, expires_at)
+		VALUES ($1, $2, $3)
+	`, userID, hashed, expiresAt)
+
+	return err
+}
+
+func (r *Repository) GetRefreshToken(jti string) (bool, error) {
+	hashed := utils.HashToken(jti)
+
+	var exists int
+	err := r.DB.QueryRow(`
+		SELECT 1 FROM refresh_tokens
+		WHERE jti = $1 AND expires_at > NOW()
+	`, hashed).Scan(&exists)
+
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+
+	return err == nil, err
+}
+
+func (r *Repository) DeleteRefreshToken(jti string) error {
+	hashed := utils.HashToken(jti)
+
+	_, err := r.DB.Exec(
+		`DELETE FROM refresh_tokens WHERE jti = $1`,
+		hashed,
+	)
+
+	return err
 }
 
 // admin routes

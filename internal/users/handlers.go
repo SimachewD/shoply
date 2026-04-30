@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sime/shoply/internal/auth"
 	"github.com/sime/shoply/internal/models"
 )
 
@@ -43,23 +44,86 @@ func (h *Handler) Login(c *gin.Context) {
 	var req LoginRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": err.Error(),
-		})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid input"})
 		return
 	}
 
-	token, user, err := h.service.Login(req)
+	access, refresh, user, err := h.service.Login(req)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": err.Error(),
-		})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 🍪 set refresh token cookie
+	c.SetCookie(
+		"refresh_token",
+		refresh,
+		int(auth.RefreshTokenTTL.Seconds()),
+		"/",
+		"",
+		true, // Secure
+		true, // HttpOnly
+	)
 
 	c.JSON(http.StatusOK, gin.H{
-		"token": token,
-        "user": user,
+		"access_token": access,
+		"user":         user,
+	})
+}
+
+//
+// 🔁 REFRESH
+//
+
+func (h *Handler) Refresh(c *gin.Context) {
+	token, err := c.Cookie("refresh_token")
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing refresh token"})
+		return
+	}
+
+	access, newRefresh, err := h.service.Refresh(token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh"})
+		return
+	}
+
+	// rotate cookie
+	c.SetCookie(
+		"refresh_token",
+		newRefresh,
+		int(auth.RefreshTokenTTL.Seconds()),
+		"/",
+		"",
+		true,
+		true,
+	)
+
+	c.JSON(http.StatusOK, gin.H{
+		"access_token": access,
+	})
+}
+
+//
+// 🚪 LOGOUT
+//
+
+func (h *Handler) Logout(c *gin.Context) {
+	token, _ := c.Cookie("refresh_token")
+
+	err := h.service.Logout(token)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{
+            "error": err.Error(),
+        })
+        return
+    }
+
+	// clear cookie
+	c.SetCookie("refresh_token", "", -1, "/", "", true, true)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "logged out",
 	})
 }
 

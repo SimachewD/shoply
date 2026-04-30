@@ -19,6 +19,7 @@ func UserRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 	{
 		authRoutes.POST("/register", handler.Register)
 		authRoutes.POST("/login", handler.Login)
+		authRoutes.POST("/logout", handler.Logout)
 	}
 
 	// user routes

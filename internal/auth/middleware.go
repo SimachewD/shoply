@@ -19,16 +19,28 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-
-		claims, err := ValidateJWT(tokenString, utils.GetEnv("JWT_SECRET", "your_jwt_secret"))
-		if err != nil {
+		if !strings.HasPrefix(authHeader, "Bearer ") {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "invalid token",
+				"error": "invalid authorization format",
 			})
 			return
 		}
 
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// ✅ use ACCESS token validation
+		claims, err := ValidateAccessToken(
+			tokenString,
+			utils.GetEnv("JWT_SECRET", "your_jwt_secret"),
+		)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"error": "invalid or expired access token",
+			})
+			return
+		}
+
+		// ✅ set context
 		c.Set("userID", claims.UserID)
 		c.Set("role", claims.Role)
 
