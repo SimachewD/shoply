@@ -19,15 +19,17 @@ func UserRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 	{
 		authRoutes.POST("/register", handler.Register)
 		authRoutes.POST("/login", handler.Login)
+		authRoutes.POST("/refresh", handler.Refresh)
 		authRoutes.POST("/logout", handler.Logout)
+		authRoutes.GET("/me", auth.AuthMiddleware(), handler.GetProfile)
+		authRoutes.PATCH("/me", auth.AuthMiddleware(), handler.UpdateProfile)
 	}
 
 	// user routes
 	userRoutes := r.Group("/api/user")
 	userRoutes.Use(auth.AuthMiddleware())
 	{
-		userRoutes.GET("/profile/:id", handler.GetProfile)
-		userRoutes.PATCH("/profile/:id", handler.UpdateProfile)
+		// TODO: implement authenticated user routes
 	}
 
 	// admin routes

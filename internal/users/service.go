@@ -114,12 +114,20 @@ func (s *Service) Refresh(oldToken string) (string, string, error) {
 	}
 
 	// delete old (rotation)
-	_ = s.repo.DeleteRefreshToken(claims.JTI)
+	err = s.repo.DeleteRefreshToken(claims.JTI)
+	if err != nil {
+		return "", "", err
+	}
+
+	user, err := s.repo.GetUserByID(claims.UserID)
+	if err != nil {
+		return "", "", err
+	}
 
 	// generate new access
 	accessToken, err := auth.GenerateAccessToken(
 		claims.UserID,
-		"", // role optional here (or fetch if needed)
+		string(user.Role),
 		s.jwtSecret,
 	)
 	if err != nil {
@@ -136,11 +144,14 @@ func (s *Service) Refresh(oldToken string) (string, string, error) {
 	}
 
 	// store new refresh
-	_ = s.repo.StoreRefreshToken(
+	err = s.repo.StoreRefreshToken(
 		claims.UserID,
 		newJTI,
 		time.Now().Add(auth.RefreshTokenTTL),
 	)
+	if err != nil {
+		return "", "", err
+	}
 
 	return accessToken, newRefresh, nil
 }

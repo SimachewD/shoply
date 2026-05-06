@@ -9,7 +9,7 @@ import (
 
 var (
 	AccessTokenTTL  = 15 * time.Minute
-	RefreshTokenTTL = 7 * 24 * time.Hour
+	RefreshTokenTTL = 24 * time.Hour
 )
 
 //
