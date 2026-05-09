@@ -8,7 +8,8 @@ import (
 )
 
 var (
-	AccessTokenTTL  = 15 * time.Minute
+	// TODO: change the access token TTL to 15 minutes
+	AccessTokenTTL  = 24 * time.Hour
 	RefreshTokenTTL = 24 * time.Hour
 )
 
@@ -17,12 +18,12 @@ var (
 //
 
 type AccessClaims struct {
-	UserID string `json:"user_id"`
-	Role   string `json:"role"`
+	UserID uuid.UUID `json:"user_id"`
+	Role   string    `json:"role"`
 	jwt.RegisteredClaims
 }
 
-func GenerateAccessToken(userID, role, secret string) (string, error) {
+func GenerateAccessToken(userID uuid.UUID, role string, secret string) (string, error) {
 	claims := AccessClaims{
 		UserID: userID,
 		Role:   role,
@@ -62,12 +63,12 @@ func ValidateAccessToken(tokenStr, secret string) (*AccessClaims, error) {
 //
 
 type RefreshClaims struct {
-	UserID string `json:"user_id"`
-	JTI    string `json:"jti"`
+	UserID uuid.UUID `json:"user_id"`
+	JTI    string    `json:"jti"`
 	jwt.RegisteredClaims
 }
 
-func GenerateRefreshToken(userID, secret string) (token string, jti string, err error) {
+func GenerateRefreshToken(userID uuid.UUID, secret string) (token string, jti string, err error) {
 	jti = uuid.NewString()
 
 	claims := RefreshClaims{

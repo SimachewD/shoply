@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sime/shoply/internal/response"
 	"github.com/sime/shoply/internal/utils"
 )
 
@@ -13,35 +14,28 @@ func AuthMiddleware() gin.HandlerFunc {
 		authHeader := c.GetHeader("Authorization")
 
 		if authHeader == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "missing authorization header",
-			})
+			response.Abort(c, http.StatusUnauthorized, "UNAUTHORIZED", "missing authorization header")
 			return
 		}
 
 		if !strings.HasPrefix(authHeader, "Bearer ") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "invalid authorization format",
-			})
+			response.Abort(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid authorization format")
 			return
 		}
 
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 
-		// ✅ use ACCESS token validation
 		claims, err := ValidateAccessToken(
 			tokenString,
 			utils.GetEnv("JWT_SECRET", "your_jwt_secret"),
 		)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": "invalid or expired access token",
-			})
+			response.Abort(c, http.StatusUnauthorized, "UNAUTHORIZED", "invalid or expired access token")
 			return
 		}
 
 		// ✅ set context
-		c.Set("userID", claims.UserID)
+		c.Set("userID", claims.UserID.String())
 		c.Set("role", claims.Role)
 
 		c.Next()
@@ -59,8 +53,6 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 			}
 		}
 
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"error": "forbidden",
-		})
+		response.Abort(c, http.StatusForbidden, "FORBIDDEN", "forbidden")
 	}
 }

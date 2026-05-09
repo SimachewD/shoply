@@ -19,7 +19,7 @@ func LoadConfig() *Config {
 	pgPass := utils.GetEnv("DB_PASSWORD", "3165")
 	pgDB := utils.GetEnv("DB_NAME", "shoply_db")
 
-	redisUrl := utils.GetEnv("REDIS_URL", "redis://localhost:6379/0")
+	redisUrl := utils.GetEnv("REDIS_URL", "redis://localhost:63779/0")
 
 	return &Config{
 		PostgresURL: fmt.Sprintf(

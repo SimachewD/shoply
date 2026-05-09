@@ -2,8 +2,11 @@ package users
 
 import (
 	"errors"
+	"fmt"
+	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sime/shoply/internal/auth"
 	"github.com/sime/shoply/internal/models"
 	"golang.org/x/crypto/bcrypt"
@@ -51,10 +54,10 @@ func (s *Service) Register(req RegisterRequest) (*models.User, error) {
 	return s.repo.Register(user)
 }
 
-func (s *Service) Login(req LoginRequest) (string, string, *models.User, error) {
+func (s *Service) Login(req LoginRequest) (string, string, error) {
 	user, err := s.repo.GetUserByEmail(req.Email)
 	if err != nil {
-		return "", "", nil, errors.New("invalid credentials")
+		return "", "", errors.New("invalid credentials")
 	}
 
 	err = bcrypt.CompareHashAndPassword(
@@ -62,44 +65,40 @@ func (s *Service) Login(req LoginRequest) (string, string, *models.User, error) 
 		[]byte(req.Password),
 	)
 	if err != nil {
-		return "", "", nil, errors.New("invalid credentials")
+		return "", "", errors.New("invalid credentials")
 	}
 
 	// access token
 	accessToken, err := auth.GenerateAccessToken(
-		user.ID.String(),
+		user.ID,
 		string(user.Role),
 		s.jwtSecret,
 	)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", err
 	}
 
 	// refresh token
 	refreshToken, jti, err := auth.GenerateRefreshToken(
-		user.ID.String(),
+		user.ID,
 		s.jwtSecret,
 	)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", err
 	}
 
 	// store refresh token
 	err = s.repo.StoreRefreshToken(
-		user.ID.String(),
+		user.ID,
 		jti,
 		time.Now().Add(auth.RefreshTokenTTL),
 	)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", err
 	}
 
-	return accessToken, refreshToken, user, nil
+	return accessToken, refreshToken, nil
 }
-
-//
-// 🔁 REFRESH
-//
 
 func (s *Service) Refresh(oldToken string) (string, string, error) {
 	claims, err := auth.ValidateRefreshToken(oldToken, s.jwtSecret)
@@ -156,10 +155,6 @@ func (s *Service) Refresh(oldToken string) (string, string, error) {
 	return accessToken, newRefresh, nil
 }
 
-//
-// 🚪 LOGOUT
-//
-
 func (s *Service) Logout(refreshToken string) error {
 	claims, err := auth.ValidateRefreshToken(refreshToken, s.jwtSecret)
 	if err != nil {
@@ -170,24 +165,73 @@ func (s *Service) Logout(refreshToken string) error {
 }
 
 // admin routes
-func (s *Service) GetAllUsers() ([]models.User, error) {
-	return s.repo.GetAllUsers()
+func (s *Service) GetSellerRequests() ([]models.SellerRequest, error) {
+	return s.repo.GetSellerRequests()
 }
 
-func (s *Service) GetPendingRequests() ([]models.SellerRequest, error) {
-	return s.repo.GetPendingRequests()
+func (s *Service) GetUsers(cursor, limitStr, search string, role models.Role, status models.Status, sortedBy string, sortOrder string) ([]models.User, int64, bool, string, error) {
+	limit := 20
+
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		limit = l
+	}
+
+	users, total, hasMore, nextCursor, err := s.repo.GetUsers(cursor, limit, search, role, status, sortedBy, sortOrder)
+	if err != nil {
+		return nil, 0, false, "", err
+	}
+	return users, total, hasMore, nextCursor, nil
 }
 
-func (s *Service) DeleteUser(userID string) (*models.User, error) {
-	return s.repo.DeleteUser(userID)
+func (s *Service) GetDeletedUsers(cursor, limitStr, search string, sortedBy string, sortOrder string) ([]models.User, int64, bool, string, error) {
+	limit := 20
+
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		limit = l
+	}
+
+	users, total, hasMore, nextCursor, err := s.repo.GetDeletedUsers(cursor, limit, search, sortedBy, sortOrder)
+	if err != nil {
+		return nil, 0, false, "", err
+	}
+	return users, total, hasMore, nextCursor, nil
 }
 
-func (s *Service) ChangeUserRole(userID string, role models.Role) error {
-	return s.repo.UpdateUserRole(userID, role)
+func (s *Service) ChangeRole(adminID uuid.UUID, userID uuid.UUID, role models.Role, reason string) error {
+	return s.repo.UpdateUserRole(userID, role, adminID, reason)
+}
+
+func (s *Service) SuspendUser(adminID uuid.UUID, userID uuid.UUID, reason string) error {
+	return s.repo.SuspendUser(userID, adminID, reason)
+}
+
+func (s *Service) BanUser(adminID uuid.UUID, userID uuid.UUID, reason string) error {
+	return s.repo.BanUser(userID, adminID, reason)
+}
+
+func (s *Service) ActivateUser(adminID uuid.UUID, userID uuid.UUID, reason string) error {
+	return s.repo.ActivateUser(userID, adminID, reason)
+}
+
+func (s *Service) DeleteUser(adminID uuid.UUID, userID uuid.UUID, reason string) error {
+	return s.repo.DeleteUser(userID, adminID, reason)
+}
+
+func (s *Service) RestoreUser(adminID uuid.UUID, userID uuid.UUID, reason string) error {
+	return s.repo.RestoreUser(userID, adminID, reason)
+}
+
+func (s *Service) GetAuditLogs() ([]models.AuditLog, error) {
+	return s.repo.GetAuditLogs()
+}
+
+func (s *Service) GetUserAuditLogs(userID uuid.UUID) ([]models.AuditLog, error) {
+	return s.repo.GetUserAuditLogs(userID)
 }
 
 // user routes
-func (s *Service) GetUserByID(userID string) (*models.User, error) {
+func (s *Service) GetUserByID(userID uuid.UUID) (*models.User, error) {
+	fmt.Println("service get user id: ", userID)
 	return s.repo.GetUserByID(userID)
 }
 
@@ -195,10 +239,10 @@ func (s *Service) GetUserByEmail(email string) (*models.User, error) {
 	return s.repo.GetUserByEmail(email)
 }
 
-func (s *Service) UpdateUser(user *models.User) (*models.User, error) {
-	return s.repo.UpdateUser(user)
+func (s *Service) UpdateProfile(user *models.User) (*models.User, error) {
+	return s.repo.UpdateProfile(user)
 }
 
-func (s *Service) CreateSellerRequest(userID string) error {
+func (s *Service) CreateSellerRequest(userID uuid.UUID) error {
 	return s.repo.CreateSellerRequest(userID)
 }

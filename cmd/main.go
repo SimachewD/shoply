@@ -49,11 +49,12 @@ func main() {
 	// 🟢 7. Enable CORS for specific origin
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:8080"}, 
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		AllowCredentials: true, 
 	}))
 
+	// 🟢 8. Register Routes
 	users.UserRoutes(r, db, rdb)
 
 	log.Printf("Shoply running on port %s", ":8000")

@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"github.com/sime/shoply/internal/auth"
+	"github.com/sime/shoply/internal/models"
 	"github.com/sime/shoply/internal/utils"
 )
 
@@ -25,6 +26,23 @@ func UserRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 		authRoutes.PATCH("/me", auth.AuthMiddleware(), handler.UpdateProfile)
 	}
 
+	// admin routes
+	adminRoutes := r.Group("/api/admin")
+
+	adminRoutes.Use(auth.AuthMiddleware())
+	adminRoutes.Use(auth.RequireRole(string(models.RoleAdmin)))
+	{
+		adminRoutes.GET("/users", handler.GetUsers)
+		adminRoutes.GET("/deleted-users", handler.GetDeletedUsers)
+		adminRoutes.PATCH("/users/:id/role", handler.ChangeRole)
+		adminRoutes.PATCH("/users/:id/suspend", handler.SuspendUser)
+		adminRoutes.PATCH("/users/:id/ban", handler.BanUser)
+		adminRoutes.PATCH("/users/:id/activate", handler.ActivateUser)
+		adminRoutes.DELETE("/users/:id/delete", handler.DeleteUser)
+		adminRoutes.PATCH("/users/:id/restore", handler.RestoreUser)
+		adminRoutes.GET("/users/:id/audit-logs", handler.GetUserAuditLogs)
+	}
+
 	// user routes
 	userRoutes := r.Group("/api/user")
 	userRoutes.Use(auth.AuthMiddleware())
@@ -32,15 +50,9 @@ func UserRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 		// TODO: implement authenticated user routes
 	}
 
-	// admin routes
-	admin := r.Group("/api/admin")
-	admin.Use(auth.AuthMiddleware())
-	admin.Use(auth.RequireRole("admin"))
+	// public routes
+	public := r.Group("/api")
 	{
-		admin.GET("/users", handler.GetUsers)
-		admin.DELETE("/users/:id", handler.DeleteUser)
-		admin.PATCH("/users/:id/role", handler.ChangeUserRole)
-		admin.GET("/users/:id", handler.GetProfile)
-		admin.PATCH("/users/:id", handler.UpdateProfile)
+		public.GET("/users/:id", handler.GetProfile)
 	}
 }
