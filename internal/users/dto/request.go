@@ -42,4 +42,4 @@ type ActivateUserRequest struct {
 
 type RestoreUserRequest struct {
 	Reason string `json:"reason" binding:"required"`
-}	
+}

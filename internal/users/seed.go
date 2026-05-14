@@ -25,7 +25,7 @@ func SeedAdmin(repo *Repository) {
 		Name:         "Admin",
 		Email:        email,
 		PasswordHash: string(hashed),
-		Role:         models.RoleAdmin,
+		Role:         models.RoleSuperAdmin,
 	}
 
 	_, err = repo.Register(admin)

@@ -1,7 +1,10 @@
 package users
 
 import (
+	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -29,11 +32,11 @@ func (h *Handler) Register(c *gin.Context) {
 
 	user, err := h.service.Register(req)
 	mappedUser := dto.UserResponse{
-		ID:       user.ID.String(),
-		Name:     user.Name,
-		Email:    user.Email,
-		Role:     user.Role,
-		Status:   user.Status,
+		ID:     user.ID.String(),
+		Name:   user.Name,
+		Email:  user.Email,
+		Role:   user.Role,
+		Status: user.Status,
 	}
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
@@ -106,10 +109,10 @@ func (h *Handler) Logout(c *gin.Context) {
 	token, _ := c.Cookie("refresh_token")
 
 	err := h.service.Logout(token)
-    if err != nil {
-        response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
-        return
-    }
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		return
+	}
 
 	// clear cookie
 	c.SetCookie("refresh_token", "", -1, "/", "", true, true)
@@ -136,25 +139,29 @@ func (h *Handler) GetUsers(c *gin.Context) {
 	search := c.Query("search")
 	role := models.Role(c.Query("role"))
 	status := models.Status(c.Query("status"))
-	sortedBy := c.Query("sortBy")
+	sortBy := c.Query("sortBy")
 	sortOrder := c.Query("sortOrder")
 
-	users, total, hasMore, nextCursor, err := h.service.GetUsers(cursor, limitStr, search, role, status, sortedBy, sortOrder)
+	requestorRole := c.GetString("role")
+
+	users, total, hasMore, nextCursor, err := h.service.GetUsers(cursor, limitStr, search, role, status, sortBy, sortOrder, requestorRole)
 
 	mappedUsers := make([]dto.UserResponse, len(users))
 	meta := gin.H{
-		"total": total,
-		"has_more": hasMore,
+		"total":       total,
+		"has_more":    hasMore,
 		"next_cursor": nextCursor,
 	}
 
 	for i, u := range users {
 		mappedUsers[i] = dto.UserResponse{
-			ID:       u.ID.String(),
-			Name:     u.Name,
-			Email:    u.Email,
-			Role:     u.Role,
-			Status: u.Status,
+			ID:        u.ID.String(),
+			Name:      u.Name,
+			Email:     u.Email,
+			Role:      u.Role,
+			Status:    u.Status,
+			CreatedAt: u.CreatedAt,
+			UpdatedAt: u.UpdatedAt,
 		}
 	}
 
@@ -172,28 +179,28 @@ func (h *Handler) GetDeletedUsers(c *gin.Context) {
 	limitStr := c.Query("limit")
 
 	search := c.Query("search")
-	sortedBy := c.Query("sortBy")
+	sortBy := c.Query("sortBy")
 	sortOrder := c.Query("sortOrder")
 
-	users, total, hasMore, nextCursor, err := h.service.GetDeletedUsers(cursor, limitStr, search, sortedBy, sortOrder)
+	users, total, hasMore, nextCursor, err := h.service.GetDeletedUsers(cursor, limitStr, search, sortBy, sortOrder)
 
 	mappedUsers := make([]dto.UserResponse, len(users))
 	meta := gin.H{
-		"total": total,
-		"has_more": hasMore,
+		"total":       total,
+		"has_more":    hasMore,
 		"next_cursor": nextCursor,
 	}
 
 	for i, u := range users {
 		mappedUsers[i] = dto.UserResponse{
-			ID:       u.ID.String(),
-			Name:     u.Name,
-			Email:    u.Email,
-			Role:     u.Role,
+			ID:     u.ID.String(),
+			Name:   u.Name,
+			Email:  u.Email,
+			Role:   u.Role,
 			Status: u.Status,
 		}
 	}
-	
+
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
 		return
@@ -206,6 +213,7 @@ func (h *Handler) ChangeRole(c *gin.Context) {
 
 	id, _ := uuid.Parse(c.Param("id"))
 	adminID, _ := uuid.Parse(c.GetString("userID"))
+	requestorRole := c.GetString("role")
 
 	var req dto.ChangeRoleRequest
 
@@ -214,10 +222,25 @@ func (h *Handler) ChangeRole(c *gin.Context) {
 		return
 	}
 
-	err := h.service.ChangeRole(adminID, id, req.Role, req.Reason)
+	ip := c.ClientIP()
+	ua := c.Request.UserAgent()
+
+	err := h.service.ChangeRole(adminID, id, req.Role, req.Reason, &ip, &ua, requestorRole)
 
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		switch {
+			case errors.Is(err, ErrUserNotFound):
+				response.Error(c, http.StatusNotFound, "NOT_FOUND", "User not found")
+
+			case errors.Is(err, ErrPromoteToAdmin),
+				errors.Is(err, ErrPromoteToSuperAdmin),
+				errors.Is(err, ErrChangeSuperAdminRole):
+
+				response.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error())
+
+			default:
+				response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+			}
 		return
 	}
 
@@ -239,9 +262,25 @@ func (h *Handler) SuspendUser(c *gin.Context) {
 		return
 	}
 
-	err := h.service.SuspendUser(adminID, id, req.Reason)
+	ip := c.ClientIP()
+	ua := c.Request.UserAgent()
+	requestorRole := c.GetString("role")
+
+	err := h.service.SuspendUser(adminID, id, req.Reason, &ip, &ua, requestorRole)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		switch {
+			case errors.Is(err, ErrUserNotFound):
+				response.Error(c, http.StatusNotFound, "NOT_FOUND", "User not found")
+
+			case errors.Is(err, ErrSuspendYourself):
+				response.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error())
+
+			case errors.Is(err, ErrSuspendAdmins):
+				response.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error())
+
+			default:
+				response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+			}
 		return
 	}
 
@@ -259,11 +298,27 @@ func (h *Handler) BanUser(c *gin.Context) {
 		return
 	}
 
-	err := h.service.BanUser(adminID, id, req.Reason)
+	ip := c.ClientIP()
+	ua := c.Request.UserAgent()
+	requestorRole := c.GetString("role")
+
+	err := h.service.BanUser(adminID, id, req.Reason, &ip, &ua, requestorRole)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
-		return
-	}
+		switch {
+			case errors.Is(err, ErrUserNotFound):
+				response.Error(c, http.StatusNotFound, "NOT_FOUND", "User not found")
+
+			case errors.Is(err, ErrBanYourself):
+				response.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error())
+
+			case errors.Is(err, ErrBanAdmins):
+				response.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error())
+
+			default:
+				response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+			}
+			return
+		}
 
 	response.Success(c, http.StatusOK, "User banned successfully", nil, nil)
 }
@@ -279,10 +334,23 @@ func (h *Handler) ActivateUser(c *gin.Context) {
 		return
 	}
 
-	err := h.service.ActivateUser(adminID, id, req.Reason)
+	ip := c.ClientIP()
+	ua := c.Request.UserAgent()
+	requestorRole := c.GetString("role")
+
+	err := h.service.ActivateUser(adminID, id, req.Reason, &ip, &ua, requestorRole)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
-		return
+		switch {
+			case errors.Is(err, ErrUserNotFound):
+				response.Error(c, http.StatusNotFound, "NOT_FOUND", "User not found")
+
+			case errors.Is(err, ErrActivateAdmins):
+				response.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error())
+
+			default:
+				response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+			}
+			return
 	}
 
 	response.Success(c, http.StatusOK, "User reactivated successfully", nil, nil)
@@ -292,7 +360,7 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 
 	id, _ := uuid.Parse(c.Param("id"))
 	adminID, _ := uuid.Parse(c.GetString("userID"))
-	
+
 	var req dto.DeleteUserRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -300,10 +368,26 @@ func (h *Handler) DeleteUser(c *gin.Context) {
 		return
 	}
 
-	err := h.service.DeleteUser(adminID, id, req.Reason)
+	ip := c.ClientIP()
+	ua := c.Request.UserAgent()
+	requestorRole := c.GetString("role")
+
+	err := h.service.DeleteUser(adminID, id, req.Reason, &ip, &ua, requestorRole)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
-		return
+		switch {
+			case errors.Is(err, ErrUserNotFound):
+				response.Error(c, http.StatusNotFound, "NOT_FOUND", "User not found")
+
+			case errors.Is(err, ErrDeleteYourself):
+				response.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error())
+
+			case errors.Is(err, ErrDeleteAdmins):
+				response.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error())
+
+			default:
+				response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+			}
+			return
 	}
 
 	response.Success(c, http.StatusOK, "User deleted successfully", nil, nil)
@@ -320,11 +404,24 @@ func (h *Handler) RestoreUser(c *gin.Context) {
 		return
 	}
 
-	err := h.service.RestoreUser(adminID, id, req.Reason)
+	ip := c.ClientIP()
+	ua := c.Request.UserAgent()
+	requestorRole := c.GetString("role")
+
+	err := h.service.RestoreUser(adminID, id, req.Reason, &ip, &ua, requestorRole)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
-		return
-	}
+		switch {
+			case errors.Is(err, ErrUserNotFound):
+				response.Error(c, http.StatusNotFound, "NOT_FOUND", "User not found")
+
+			case errors.Is(err, ErrRestoreAdmins):
+				response.Error(c, http.StatusForbidden, "FORBIDDEN", err.Error())
+
+			default:
+				response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+			}
+			return
+		}
 
 	response.Success(c, http.StatusOK, "User restored successfully", nil, nil)
 }
@@ -332,94 +429,170 @@ func (h *Handler) RestoreUser(c *gin.Context) {
 func (h *Handler) GetUserAuditLogs(c *gin.Context) {
 
 	id, _ := uuid.Parse(c.Param("id"))
-	logs, err := h.service.GetUserAuditLogs(id)
+
+	cursor := c.Query("cursor")
+	limitStr := c.Query("limit")
+	search := c.Query("search")
+	sortBy := c.Query("sortBy")
+	sortOrder := c.Query("sortOrder")
+
+	logs, total, hasMore, nextCursor, err := h.service.GetUserAuditLogs(id, cursor, limitStr, search, sortBy, sortOrder)
+
+	meta := gin.H{
+		"total":       total,
+		"has_more":    hasMore,
+		"next_cursor": nextCursor,
+	}
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
 		return
 	}
 
-	response.Success(c, http.StatusOK, "Audit logs retrieved successfully", logs, nil)
+	mappedLogs := make([]dto.AuditLogResponse, len(logs))
+	for i, l := range logs {
+		var metadata map[string]any
+
+		if len(l.Metadata) > 0 {
+			err := json.Unmarshal(l.Metadata, &metadata)
+			if err != nil {
+				metadata = nil
+			}
+		}
+		mappedLogs[i] = dto.AuditLogResponse{
+			ID:        l.ID.String(),
+			UserID:    l.UserID.String(),
+			ActorID:   l.ActorID.String(),
+			ActorName: l.ActorName,
+			Action:    l.Action,
+			Resource:  l.Resource,
+			Metadata:  metadata,
+			IPAddress: l.IPAddress,
+			UserAgent: l.UserAgent,
+			CreatedAt: l.CreatedAt,
+		}
+	}
+
+	response.Success(c, http.StatusOK, "Audit logs retrieved successfully", mappedLogs, meta)
 }
 
 // user routes
-func (h *Handler) GetProfile(c *gin.Context) {
-    id, _ := uuid.Parse(c.GetString("userID"))
-    
-	user, err := h.service.GetUserByID(id)
-	mappedUser := dto.UserResponse{
-		ID:       user.ID.String(),
-		Name:     user.Name,
-		Email:    user.Email,
-		Role:     user.Role,
-		Status: user.Status,
-	}
+func (h *Handler) GetUserProfile(c *gin.Context) {
+	requestorRole := c.GetString("role")
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-        response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		response.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 		return
 	}
-    
-	response.Success(c, http.StatusOK, "User profile retrieved successfully", mappedUser, nil)
+
+	user, err := h.service.GetUserProfile(id, requestorRole)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			response.Error(c, http.StatusNotFound, "NOT_FOUND", "User not found")
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		return
+	}
+	mappedUser := dto.UserResponse{
+		ID:     user.ID.String(),
+		Name:   user.Name,
+		Email:  user.Email,
+		Role:   user.Role,
+		Status: user.Status,
+	}
+
+	response.Success(c, http.StatusOK, "User retrieved successfully", mappedUser, nil)
 }
 
+func (h *Handler) GetMyProfile(c *gin.Context) {
+	id, err := uuid.Parse(c.GetString("userID"))
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		return
+	}
+
+	user, err := h.service.GetMyProfile(id)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			response.Error(c, http.StatusNotFound, "NOT_FOUND", "Your profile not found")
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		return
+	}
+	mappedUser := dto.UserResponse{
+		ID:     user.ID.String(),
+		Name:   user.Name,
+		Email:  user.Email,
+		Role:   user.Role,
+		Status: user.Status,
+	}
+
+	response.Success(c, http.StatusOK, "User retrieved successfully", mappedUser, nil)
+}
 
 func (h *Handler) GetUserByEmail(c *gin.Context) {
-    email := c.Param("email")
+	email := c.Param("email")
 
 	user, err := h.service.GetUserByEmail(email)
 	mappedUser := dto.UserResponse{
-		ID:       user.ID.String(),
-		Name:     user.Name,
-		Email:    user.Email,
-		Role:     user.Role,
+		ID:     user.ID.String(),
+		Name:   user.Name,
+		Email:  user.Email,
+		Role:   user.Role,
 		Status: user.Status,
 	}
 	if err != nil {
-        response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
 		return
 	}
-    
+
 	response.Success(c, http.StatusOK, "User retrieved successfully", mappedUser, nil)
 }
 
 func (h *Handler) UpdateProfile(c *gin.Context) {
-    id, _ := uuid.Parse(c.GetString("userID"))
-    var req dto.UpdateProfileRequest
+	id, err := uuid.Parse(c.GetString("userID"))
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		return
+	}
+	var req dto.UpdateProfileRequest
 
-    if err := c.ShouldBindJSON(&req); err != nil {
-        response.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
-        return
-    }
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "INVALID_INPUT", err.Error())
+		return
+	}
 
-    user, err := h.service.GetUserByID(id)
-    mappedUser := dto.UserResponse{
-        ID:       user.ID.String(),
-        Name:     user.Name,
-        Email:    user.Email,
-        Role:     user.Role,
-        Status: user.Status,
-    }
-    if err != nil {
-        response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
-        return
-    }
+	user, err := h.service.GetUserByID(id)
+	mappedUser := dto.UserResponse{
+		ID:     user.ID.String(),
+		Name:   user.Name,
+		Email:  user.Email,
+		Role:   user.Role,
+		Status: user.Status,
+	}
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		return
+	}
 
-    user.Name = req.Name
-    user.Email = req.Email
+	user.Name = req.Name
+	user.Email = req.Email
 
-    user, err = h.service.UpdateProfile(user)
-    mappedUser = dto.UserResponse{
-        ID:       user.ID.String(),
-        Name:     user.Name,
-        Email:    user.Email,
-        Role:     user.Role,
-        Status: user.Status,
-    }
-    if err != nil {
-        response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
-        return
-    }
+	user, err = h.service.UpdateProfile(user)
+	mappedUser = dto.UserResponse{
+		ID:     user.ID.String(),
+		Name:   user.Name,
+		Email:  user.Email,
+		Role:   user.Role,
+		Status: user.Status,
+	}
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "SERVER_ERROR", err.Error())
+		return
+	}
 
-    response.Success(c, http.StatusOK, "Profile updated successfully", mappedUser, nil)
+	response.Success(c, http.StatusOK, "Profile updated successfully", mappedUser, nil)
 }
 
 func (h *Handler) RequestSeller(c *gin.Context) {

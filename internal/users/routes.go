@@ -22,7 +22,7 @@ func UserRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 		authRoutes.POST("/login", handler.Login)
 		authRoutes.POST("/refresh", handler.Refresh)
 		authRoutes.POST("/logout", handler.Logout)
-		authRoutes.GET("/me", auth.AuthMiddleware(), handler.GetProfile)
+		authRoutes.GET("/me", auth.AuthMiddleware(), handler.GetMyProfile)
 		authRoutes.PATCH("/me", auth.AuthMiddleware(), handler.UpdateProfile)
 	}
 
@@ -30,7 +30,7 @@ func UserRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 	adminRoutes := r.Group("/api/admin")
 
 	adminRoutes.Use(auth.AuthMiddleware())
-	adminRoutes.Use(auth.RequireRole(string(models.RoleAdmin)))
+	adminRoutes.Use(auth.RequireRole(string(models.RoleAdmin), string(models.RoleSuperAdmin)))
 	{
 		adminRoutes.GET("/users", handler.GetUsers)
 		adminRoutes.GET("/deleted-users", handler.GetDeletedUsers)
@@ -44,15 +44,9 @@ func UserRoutes(r *gin.Engine, db *sql.DB, redisClient *redis.Client) {
 	}
 
 	// user routes
-	userRoutes := r.Group("/api/user")
+	userRoutes := r.Group("/api/users")
 	userRoutes.Use(auth.AuthMiddleware())
 	{
-		// TODO: implement authenticated user routes
-	}
-
-	// public routes
-	public := r.Group("/api")
-	{
-		public.GET("/users/:id", handler.GetProfile)
+		userRoutes.GET("/:id", handler.GetUserProfile)
 	}
 }

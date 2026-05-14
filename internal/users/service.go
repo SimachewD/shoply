@@ -2,14 +2,31 @@ package users
 
 import (
 	"errors"
-	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/sime/shoply/internal/auth"
 	"github.com/sime/shoply/internal/models"
 	"golang.org/x/crypto/bcrypt"
+)
+
+var (
+	ErrUserNotFound           = errors.New("user not found")
+	ErrPromoteToAdmin         = errors.New("you don't have permission to promote users to admin")
+	ErrPromoteToSuperAdmin    = errors.New("you don't have permission to promote users to super admin")
+	ErrChangeSuperAdminRole   = errors.New("you can't change super admin's role")
+	ErrSuspendYourself        = errors.New("you can't suspend yourself")
+	ErrBanYourself            = errors.New("you can't ban yourself")
+	ErrSuspendAdmins          = errors.New("you don't have permission to suspend admins")
+	ErrBanAdmins              = errors.New("you don't have permission to ban admins")
+	ErrDeleteYourself         = errors.New("you can't delete yourself")
+	ErrDeleteAdmins           = errors.New("you don't have permission to delete admins")
+	ErrActivateAdmins         = errors.New("you don't have permission to activate admins")
+	ErrRestoreAdmins          = errors.New("you don't have permission to restore admins")
+	
+	ErrUnauthorized           = errors.New("unauthorized")
 )
 
 type Service struct {
@@ -169,69 +186,248 @@ func (s *Service) GetSellerRequests() ([]models.SellerRequest, error) {
 	return s.repo.GetSellerRequests()
 }
 
-func (s *Service) GetUsers(cursor, limitStr, search string, role models.Role, status models.Status, sortedBy string, sortOrder string) ([]models.User, int64, bool, string, error) {
+func (s *Service) GetUsers(cursor, limitStr, search string, role models.Role, status models.Status, sortBy string, sortOrder string, requestorRole string) ([]models.User, int64, bool, string, error) {
 	limit := 20
 
 	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
 		limit = l
 	}
 
-	users, total, hasMore, nextCursor, err := s.repo.GetUsers(cursor, limit, search, role, status, sortedBy, sortOrder)
+	includeSuperAdmin := requestorRole == string(models.RoleSuperAdmin)
+
+	users, total, hasMore, nextCursor, err := s.repo.GetUsers(cursor, limit, search, role, status, sortBy, sortOrder, includeSuperAdmin)
 	if err != nil {
 		return nil, 0, false, "", err
 	}
 	return users, total, hasMore, nextCursor, nil
 }
 
-func (s *Service) GetDeletedUsers(cursor, limitStr, search string, sortedBy string, sortOrder string) ([]models.User, int64, bool, string, error) {
+func (s *Service) GetDeletedUsers(cursor, limitStr, search string, sortBy string, sortOrder string) ([]models.User, int64, bool, string, error) {
 	limit := 20
 
 	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
 		limit = l
 	}
 
-	users, total, hasMore, nextCursor, err := s.repo.GetDeletedUsers(cursor, limit, search, sortedBy, sortOrder)
+	users, total, hasMore, nextCursor, err := s.repo.GetDeletedUsers(cursor, limit, search, sortBy, sortOrder)
 	if err != nil {
 		return nil, 0, false, "", err
 	}
 	return users, total, hasMore, nextCursor, nil
 }
 
-func (s *Service) ChangeRole(adminID uuid.UUID, userID uuid.UUID, role models.Role, reason string) error {
-	return s.repo.UpdateUserRole(userID, role, adminID, reason)
+func (s *Service) ChangeRole(actorID uuid.UUID, userID uuid.UUID, role models.Role, reason string, ipAddress *string, userAgent *string, requestorRole string) error {
+	user, err := s.repo.GetUserByID(userID)
+	actor, err := s.repo.GetUserByID(actorID)
+
+	if user.Role == role {
+		return errors.New("user already has " + string(user.Role) + " role")
+	}
+
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows"){
+			return ErrUserNotFound
+		}
+		return err
+	}
+
+	if requestorRole != string(models.RoleSuperAdmin) && role == models.RoleAdmin {
+		return ErrPromoteToAdmin
+	}
+	if role == models.RoleSuperAdmin {
+		return ErrPromoteToSuperAdmin
+	}
+	if user.Role == models.RoleSuperAdmin {
+		return ErrChangeSuperAdminRole
+	}
+
+	metadata := map[string]any{
+		"oldRole": user.Role,
+		"newRole": role,
+		"reason":  reason,
+	}
+	return s.repo.UpdateUserRole(userID, role, actorID, actor.Name, metadata, ipAddress, userAgent)
 }
 
-func (s *Service) SuspendUser(adminID uuid.UUID, userID uuid.UUID, reason string) error {
-	return s.repo.SuspendUser(userID, adminID, reason)
+func (s *Service) SuspendUser(actorID uuid.UUID, userID uuid.UUID, reason string, ipAddress *string, userAgent *string, requestorRole string) error {
+	if actorID == userID {
+		return ErrSuspendYourself
+	}
+	
+	user, err := s.repo.GetUserByID(userID)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows"){
+			return ErrUserNotFound
+		}
+		return err
+	}
+	if requestorRole != string(models.RoleSuperAdmin) && (user.Role == models.RoleSuperAdmin || user.Role == models.RoleAdmin) {
+		return ErrSuspendAdmins
+	}
+	
+	metadata := map[string]any{
+		"oldStatus": user.Status,
+		"newStatus": "suspended",
+		"reason":    reason,
+	}
+	return s.repo.SuspendUser(userID, actorID, user.Name, metadata, ipAddress, userAgent)
 }
 
-func (s *Service) BanUser(adminID uuid.UUID, userID uuid.UUID, reason string) error {
-	return s.repo.BanUser(userID, adminID, reason)
+func (s *Service) BanUser(actorID uuid.UUID, userID uuid.UUID, reason string, ipAddress *string, userAgent *string, requestorRole string) error {
+	if actorID == userID {
+		return ErrBanYourself
+	}
+
+	user, err := s.repo.GetUserByID(actorID)
+	if err != nil {
+		return err
+	}
+	if requestorRole != string(models.RoleSuperAdmin) && (user.Role == models.RoleSuperAdmin || user.Role == models.RoleAdmin) {
+		return ErrBanAdmins
+	}
+	metadata := map[string]any{
+		"oldStatus": user.Status,
+		"newStatus": "banned",
+		"reason":    reason,
+	}
+	return s.repo.BanUser(userID, actorID, user.Name, metadata, ipAddress, userAgent)
 }
 
-func (s *Service) ActivateUser(adminID uuid.UUID, userID uuid.UUID, reason string) error {
-	return s.repo.ActivateUser(userID, adminID, reason)
+func (s *Service) ActivateUser(actorID uuid.UUID, userID uuid.UUID, reason string, ipAddress *string, userAgent *string, requestorRole string) error {
+	user, err := s.repo.GetUserByID(actorID)
+	if err != nil {
+		return err
+	}
+	if requestorRole != string(models.RoleSuperAdmin) && (user.Role == models.RoleSuperAdmin || user.Role == models.RoleAdmin) {
+		return ErrActivateAdmins
+	}
+	
+	metadata := map[string]any{
+		"oldStatus": user.Status,
+		"newStatus": "active",
+		"reason":    reason,
+	}
+	return s.repo.ActivateUser(userID, actorID, user.Name, metadata, ipAddress, userAgent)
 }
 
-func (s *Service) DeleteUser(adminID uuid.UUID, userID uuid.UUID, reason string) error {
-	return s.repo.DeleteUser(userID, adminID, reason)
+func (s *Service) DeleteUser(actorID uuid.UUID, userID uuid.UUID, reason string, ipAddress *string, userAgent *string, requestorRole string) error {
+	if actorID == userID {
+		return ErrDeleteYourself
+	}
+
+	user, err := s.repo.GetUserByID(actorID)
+	if err != nil {
+		return err
+	}
+	if requestorRole != string(models.RoleSuperAdmin) && (user.Role == models.RoleSuperAdmin || user.Role == models.RoleAdmin) {
+		return ErrDeleteAdmins
+	}
+
+	metadata := map[string]any{
+		"oldStatus": user.Status,
+		"newStatus": "deleted",
+		"reason":    reason,
+	}
+	return s.repo.DeleteUser(userID, actorID, user.Name, metadata, ipAddress, userAgent)
 }
 
-func (s *Service) RestoreUser(adminID uuid.UUID, userID uuid.UUID, reason string) error {
-	return s.repo.RestoreUser(userID, adminID, reason)
+func (s *Service) RestoreUser(actorID uuid.UUID, userID uuid.UUID, reason string, ipAddress *string, userAgent *string, requestorRole string) error {
+	user, err := s.repo.GetUserByID(actorID)
+	if err != nil {
+		return err
+	}
+	if requestorRole != string(models.RoleSuperAdmin) && (user.Role == models.RoleSuperAdmin || user.Role == models.RoleAdmin) {
+		return ErrRestoreAdmins
+	}
+
+	metadata := map[string]any{
+		"oldStatus": user.Status,
+		"newStatus": "active",
+		"reason":    reason,
+	}
+
+	return s.repo.RestoreUser(
+		userID,
+		actorID,
+		user.Name,
+		metadata,
+		ipAddress,
+		userAgent,
+	)
 }
 
-func (s *Service) GetAuditLogs() ([]models.AuditLog, error) {
-	return s.repo.GetAuditLogs()
+func (s *Service) GetAuditLogs(cursor, limitStr, search string, sortBy string, sortOrder string) ([]models.AuditLog, int64, bool, string, error) {
+	limit := 20
+
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		limit = l
+	}
+
+	logs, total, hasMore, nextCursor, err := s.repo.GetAuditLogs(cursor, limit, search, sortBy, sortOrder)
+	if err != nil {
+		return nil, 0, false, "", err
+	}
+	return logs, total, hasMore, nextCursor, nil
 }
 
-func (s *Service) GetUserAuditLogs(userID uuid.UUID) ([]models.AuditLog, error) {
-	return s.repo.GetUserAuditLogs(userID)
+func (s *Service) GetUserAuditLogs(userID uuid.UUID, cursor, limitStr, search string, sortBy string, sortOrder string) ([]models.AuditLog, int64, bool, string, error) {
+	limit := 20
+
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		limit = l
+	}
+
+	logs, total, hasMore, nextCursor, err := s.repo.GetUserAuditLogs(userID, cursor, limit, search, sortBy, sortOrder)
+	if err != nil {
+		return nil, 0, false, "", err
+	}
+	return logs, total, hasMore, nextCursor, nil
 }
 
 // user routes
 func (s *Service) GetUserByID(userID uuid.UUID) (*models.User, error) {
-	fmt.Println("service get user id: ", userID)
+	return s.repo.GetUserByID(userID)
+}
+
+func (s *Service) GetUserProfile(userID uuid.UUID, requestorRole string) (*models.User, error) {
+	user, err := s.repo.GetUserByID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if requestorRole == string(models.RoleSuperAdmin) {
+		return user, nil
+	}
+	if requestorRole == string(models.RoleAdmin) && user.Role != models.RoleSuperAdmin {
+		return user, nil
+	}
+	if requestorRole == string(models.RoleModerator) && (
+		user.Role == models.RoleModerator || 
+		user.Role == models.RoleEditor || 
+		user.Role == models.RoleSupport || 
+		user.Role == models.RoleSeller || 
+		user.Role == models.RoleBuyer) {
+		return user, nil
+	}
+	if requestorRole == string(models.RoleSupport) && (
+		user.Role == models.RoleSupport || 
+		user.Role == models.RoleEditor || 
+		user.Role == models.RoleModerator || 
+		user.Role == models.RoleSeller || 
+		user.Role == models.RoleBuyer) {
+		return user, nil
+	}
+	if requestorRole == string(models.RoleSeller) && (
+		user.Role == models.RoleSeller || 
+		user.Role == models.RoleBuyer) {
+		return user, nil
+	}
+	if requestorRole == string(models.RoleBuyer) && user.Role == models.RoleBuyer {
+		return user, nil
+	}
+	return nil, ErrUnauthorized
+}
+
+func (s *Service) GetMyProfile(userID uuid.UUID) (*models.User, error) {
 	return s.repo.GetUserByID(userID)
 }
 

@@ -13,6 +13,10 @@ const (
 	RoleBuyer  Role = "buyer"
 	RoleSeller Role = "seller"
 	RoleAdmin  Role = "admin"
+	RoleSuperAdmin Role = "super_admin"
+	RoleModerator  Role = "moderator"
+	RoleSupport  Role = "support"
+	RoleEditor Role = "editor"
 )
 
 type Status string
